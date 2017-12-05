@@ -107,8 +107,9 @@ class FunctionTest(test.TestCase):
 
     with ops.Graph().as_default():
       with self.assertRaisesRegexp(
-          ValueError, (r"Length of out_names \(2\) does not match number of "
-                       r"outputs \(1\): my_result1, my_result2")):
+          errors_impl.InvalidArgumentError,
+          (r"output names must be either empty or equal in size to outputs. "
+           "output names size = 2 outputs size = 1")):
         MyIdentityFunc([18.0])
 
   def testDefineFunction2Args(self):
@@ -123,18 +124,16 @@ class FunctionTest(test.TestCase):
       with session.Session() as sess:
         self.assertAllEqual([5.0], sess.run(call))
 
-  def testValueErrorOnFunctionWithNoOutput(self):
-    # TODO(iga): Remove this restriction and this test
+  def testFunctionWithNoOutput(self):
 
     @function.Defun(dtypes.float32, dtypes.float32)
     def APlus2B(a, b):
-      print(a + b * 2)  # Create some ops to have nodes in the body
-      # Using 'print' to make lint happy
+      c = a + b * 2  # Create some ops to have nodes in the body
+      print(c)  # Using 'print' to make lint happy
 
     with ops.Graph().as_default():
-      with self.assertRaisesRegexp(ValueError,
-                                   "Function can not return None"):
-        APlus2B([1.0], [2.0])
+      # Call function. There should be no exceptions.
+      APlus2B([1.0], [2.0])
 
   def testDefineFunction2ArgsOutputName(self):
 
@@ -310,8 +309,7 @@ class FunctionTest(test.TestCase):
       self.assertAllClose(y.eval(), 6.)
       self.assertAllClose(dx.eval(), 2.)
 
-  def testZNoDepOnY(self):
-
+  def _testZNoDepOnY(self, use_const_grad_ys):
     @function.Defun(dtypes.float32, dtypes.float32)
     def Foo(x, y):  # pylint: disable=unused-argument
       return x * 2
@@ -321,11 +319,21 @@ class FunctionTest(test.TestCase):
       x = constant_op.constant(1.0)
       y = constant_op.constant(2.0)
       z = Foo(x, y)
-      dx, dy = gradients_impl.gradients([z], [x, y])
+      if use_const_grad_ys:
+        dx, dy = gradients_impl.gradients([z], [x, y], grad_ys=[1.0])
+      else:
+        dx, dy = gradients_impl.gradients([z], [x, y])
       with session.Session() as sess:
         dx_val, dy_val = sess.run([dx, dy])
         self.assertEqual([2.0], dx_val)
         self.assertEqual([0.0], dy_val)
+
+  def testZNoDepOnY(self):
+    self._testZNoDepOnY(False)
+
+  def testZNoDepOnYConstGradYs(self):
+    # Tests for constant folding of grad_ys
+    self._testZNoDepOnY(True)
 
   def testDefineFunctionNoArgs(self):
 
@@ -362,7 +370,7 @@ class FunctionTest(test.TestCase):
 
     @function.Defun(dtypes.float32)
     def Foo(x):
-      y = logging_ops.Print(x, [x], "Hello")
+      y = logging_ops.Print(x, [], "Hello")
       with ops.control_dependencies([y]):
         z = control_flow_ops.no_op()
       with ops.control_dependencies([z]):
@@ -499,14 +507,6 @@ class FunctionTest(test.TestCase):
 
   def testDefineErrors(self):
     with ops.Graph().as_default():
-      with self.assertRaisesRegexp(ValueError, "can not return None"):
-
-        @function.Defun()
-        def NoResult():
-          pass
-
-        _ = NoResult.definition
-
       with self.assertRaisesRegexp(ValueError, "can not return None"):
 
         @function.Defun()
@@ -724,13 +724,52 @@ class FunctionTest(test.TestCase):
         # NOTE: We still do not support capturing control deps.
         _ = Foo(x)
 
+  def testCaptureInWhileLoop(self):
+    g = ops.Graph()
+    with g.as_default():
+      x = constant_op.constant(1)
+
+      @function.Defun()
+      def Foo():
+        return control_flow_ops.while_loop(lambda i: i < 10,
+                                           lambda i: i + x,
+                                           [0])
+      y = Foo()
+
+    with self.test_session(graph=g) as sess:
+      self.assertEqual(sess.run(y), 10)
+
+  def testCaptureInCond(self):
+    g = ops.Graph()
+    with g.as_default():
+      x = constant_op.constant(1)
+
+      @function.Defun(dtypes.bool)
+      def Foo(pred):
+        return control_flow_ops.cond(pred,
+                                     lambda: x,
+                                     lambda: x + 1)
+      y = Foo(True)
+      z = Foo(False)
+
+    with self.test_session(graph=g) as sess:
+      self.assertEqual(sess.run(y), 1)
+      self.assertEqual(sess.run(z), 2)
+
   def testStableName(self):
 
     @function.Defun()
     def Foo(x, y, z):
       return math_ops.tanh(math_ops.matmul(x, y) + z)
 
-    self.assertEqual("Foo_d643acf7", Foo.instantiate([dtypes.float32] * 3).name)
+    # We added more randomness to function names in C API.
+    # TODO(iga): Remove this if statement when we switch to C API.
+    if ops._USE_C_API:  # pylint: disable=protected-access
+      self.assertEqual("Foo_aCYSbwBkR5A",
+                       Foo.instantiate([dtypes.float32] * 3).name)
+    else:
+      self.assertEqual("Foo_d643acf7",
+                       Foo.instantiate([dtypes.float32] * 3).name)
 
   def testSignatureHash(self):
     # Foo.Inner and Bar.Inner have identical function body but have
@@ -856,6 +895,24 @@ class FunctionTest(test.TestCase):
         [s, u, v],
         [result])
     self.assertEqual(len(f.signature.input_arg), 3)
+
+  def testGradientWithIntegerFunctionArgument(self):
+    @function.Defun(dtypes.int32, dtypes.float32)
+    def Foo(t, x):
+      return x[t]
+
+    g = ops.Graph()
+    with g.as_default():
+      inp = array_ops.placeholder(dtypes.float32)
+      t = constant_op.constant(0, dtypes.int32)
+      out = Foo(t, inp)
+      dinp, = gradients_impl.gradients(out, [inp])
+
+    x = np.zeros((2,)).astype(np.float32)
+    with session.Session(graph=g) as sess:
+      self.assertAllClose(
+          np.array([1.0, 0.0]).astype(np.float32),
+          sess.run(dinp, {inp: x}))
 
 
 @test_util.with_c_api
@@ -1007,7 +1064,8 @@ class FunctionsFromProtos(test.TestCase):
     library.function.extend([F1.definition])
 
     with self.assertRaisesRegexp(
-        ValueError, "FunctionDefLibrary missing 'G1_........' FunctionDef"):
+        ValueError,
+        "FunctionDefLibrary missing 'G1_[0-9a-zA-Z]{8,11}' FunctionDef"):
       function._from_library(library)
 
     # Create invalid function def that is missing F1 function def
@@ -1016,7 +1074,8 @@ class FunctionsFromProtos(test.TestCase):
     library.function.extend([G1.definition])
 
     with self.assertRaisesRegexp(
-        ValueError, "FunctionDefLibrary missing 'F1_........' FunctionDef"):
+        ValueError,
+        "FunctionDefLibrary missing 'F1_[0-9a-zA-Z]{8,11}' FunctionDef"):
       function._from_library(library)
 
   def testFromLibraryCyclicGradFuncs(self):

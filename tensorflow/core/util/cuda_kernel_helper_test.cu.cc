@@ -52,11 +52,11 @@ __global__ void Count1D(CudaLaunchConfig config, int bufsize, int* outbuf) {
   }
 }
 __global__ void Count2D(Cuda2DLaunchConfig config, int bufsize, int* outbuf) {
-  CUDA_AXIS_KERNEL_LOOP(x, config.virtual_thread_count, x) {
+  CUDA_AXIS_KERNEL_LOOP(x, config.virtual_thread_count.x, X) {
     if (x < 0) {  // x might overflow when testing extreme case
       break;
     }
-    CUDA_AXIS_KERNEL_LOOP(y, config.virtual_thread_count, y) {
+    CUDA_AXIS_KERNEL_LOOP(y, config.virtual_thread_count.y, Y) {
       if (y < 0) {  // y might overflow when testing extreme case
         break;
       }
@@ -66,15 +66,15 @@ __global__ void Count2D(Cuda2DLaunchConfig config, int bufsize, int* outbuf) {
   }
 }
 __global__ void Count3D(Cuda3DLaunchConfig config, int bufsize, int* outbuf) {
-  CUDA_AXIS_KERNEL_LOOP(x, config.virtual_thread_count, x) {
+  CUDA_AXIS_KERNEL_LOOP(x, config.virtual_thread_count.x, X) {
     if (x < 0) {  // x might overflow when testing extreme case
       break;
     }
-    CUDA_AXIS_KERNEL_LOOP(y, config.virtual_thread_count, y) {
+    CUDA_AXIS_KERNEL_LOOP(y, config.virtual_thread_count.y, Y) {
       if (y < 0) {  // y might overflow when testing extreme case
         break;
       }
-      CUDA_AXIS_KERNEL_LOOP(z, config.virtual_thread_count, z) {
+      CUDA_AXIS_KERNEL_LOOP(z, config.virtual_thread_count.z, Z) {
         if (z < 0) {  // z might overflow when testing extreme case
           break;
         }
@@ -94,7 +94,7 @@ class CudaLaunchConfigTest : public ::testing::Test {
   const int bufsize = 1024;
   int* outbuf = nullptr;
   Eigen::CudaStreamDevice stream;
-  GPUDevice d = GPUDevice(&stream);
+  Eigen::GpuDevice d = Eigen::GpuDevice(&stream);
 
   virtual void SetUp() {
     cudaError_t err = cudaMallocManaged(&outbuf, sizeof(int) * bufsize);
@@ -110,28 +110,6 @@ class CudaLaunchConfigTest : public ::testing::Test {
 
 TEST_F(CudaLaunchConfigTest, GetCudaLaunchConfig) {
   CudaLaunchConfig cfg;
-
-  // test invalid inputs
-  CudaLaunchConfig default_value;
-  cfg = GetCudaLaunchConfig(0, d);
-  EXPECT_EQ(default_value.virtual_thread_count, cfg.virtual_thread_count);
-  EXPECT_EQ(default_value.block_count, cfg.block_count);
-  EXPECT_EQ(default_value.thread_per_block, cfg.thread_per_block);
-
-  cfg = GetCudaLaunchConfig(-1, d);
-  EXPECT_EQ(default_value.virtual_thread_count, cfg.virtual_thread_count);
-  EXPECT_EQ(default_value.block_count, cfg.block_count);
-  EXPECT_EQ(default_value.thread_per_block, cfg.thread_per_block);
-
-  cfg = GetCudaLaunchConfig(0, d, Count1D, 0, 0);
-  EXPECT_EQ(default_value.virtual_thread_count, cfg.virtual_thread_count);
-  EXPECT_EQ(default_value.block_count, cfg.block_count);
-  EXPECT_EQ(default_value.thread_per_block, cfg.thread_per_block);
-
-  cfg = GetCudaLaunchConfig(-1, d, Count1D, 0, 0);
-  EXPECT_EQ(default_value.virtual_thread_count, cfg.virtual_thread_count);
-  EXPECT_EQ(default_value.block_count, cfg.block_count);
-  EXPECT_EQ(default_value.thread_per_block, cfg.thread_per_block);
 
   // test valid inputs
   #define TEST_LAUNCH_PARAMETER(work_element_count)                             \
@@ -184,34 +162,6 @@ TEST_F(CudaLaunchConfigTest, GetCuda2DLaunchConfig) {
   Cuda2DLaunchConfig cfg;
   CudaLaunchConfig cfg1d;
 
-  // test invalid inputs
-  Cuda2DLaunchConfig default_value;
-  cfg = GetCuda2DLaunchConfig(1, 0, d);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(1, -1, d);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(-1, 1, d);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(-1, 1, d);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(0, -1, d);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(0, 0, d);
-  EXPECT_EQ(default_value, cfg);
-
-  cfg = GetCuda2DLaunchConfig(1, 0, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(1, -1, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(-1, 1, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(-1, 1, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(0, -1, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda2DLaunchConfig(0, 0, d, Count2D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-
   // test valid inputs
   #define TEST_LAUNCH_PARAMETER(dimx, dimy)                                     \
     cfg1d = GetCudaLaunchConfig(bufsize, d);                                    \
@@ -251,25 +201,6 @@ TEST_F(CudaLaunchConfigTest, GetCuda2DLaunchConfig) {
 TEST_F(CudaLaunchConfigTest, GetCuda3DLaunchConfig) {
   Cuda3DLaunchConfig cfg;
   CudaLaunchConfig cfg1d;
-
-  // test invalid inputs
-  Cuda3DLaunchConfig default_value;
-  cfg = GetCuda3DLaunchConfig(0, 1, 1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(-1, 1, 1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(1, 0, 1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(1, -1, 1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(1, 1, 0, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(1, 1, -1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(0, 0, 0, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
-  cfg = GetCuda3DLaunchConfig(-1, -1, -1, d, Count3D, 0, 0);
-  EXPECT_EQ(default_value, cfg);
 
   // test valid inputs
   #define TEST_LAUNCH_PARAMETER(dimx, dimy, dimz)                               \

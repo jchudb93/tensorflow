@@ -316,7 +316,7 @@ def random_crop(value, size, seed=None, name=None):
     return array_ops.slice(value, offset, size, name=name)
 
 
-def multinomial(logits, num_samples, seed=None, name=None):
+def multinomial(logits, num_samples, seed=None, name=None, output_dtype=None):
   """Draws samples from a multinomial distribution.
 
   Example:
@@ -336,6 +336,7 @@ def multinomial(logits, num_samples, seed=None, name=None):
       @{tf.set_random_seed}
       for behavior.
     name: Optional name for the operation.
+    output_dtype: integer type to use for the output. Defaults to int64.
 
   Returns:
     The drawn samples of shape `[batch_size, num_samples]`.
@@ -344,7 +345,7 @@ def multinomial(logits, num_samples, seed=None, name=None):
     logits = ops.convert_to_tensor(logits, name="logits")
     seed1, seed2 = random_seed.get_seed(seed)
     return gen_random_ops.multinomial(
-        logits, num_samples, seed=seed1, seed2=seed2)
+        logits, num_samples, seed=seed1, seed2=seed2, output_dtype=output_dtype)
 
 
 ops.NotDifferentiable("Multinomial")
@@ -438,8 +439,8 @@ def random_poisson(lam, shape, dtype=dtypes.float32, seed=None, name=None):
       distribution(s) to sample.
     shape: A 1-D integer Tensor or Python array. The shape of the output samples
       to be drawn per "rate"-parameterized distribution.
-    dtype: The type of `lam` and the output: `float16`, `float32`, or
-      `float64`.
+    dtype: The type of the output: `float16`, `float32`, `float64`, `int32` or
+      `int64`.
     seed: A Python integer. Used to create a random seed for the distributions.
       See
       @{tf.set_random_seed}
@@ -451,7 +452,7 @@ def random_poisson(lam, shape, dtype=dtypes.float32, seed=None, name=None):
       values of type `dtype`.
   """
   with ops.name_scope(name, "random_poisson", [lam, shape]):
-    lam = ops.convert_to_tensor(lam, name="lam", dtype=dtype)
     shape = ops.convert_to_tensor(shape, name="shape", dtype=dtypes.int32)
     seed1, seed2 = random_seed.get_seed(seed)
-    return gen_random_ops._random_poisson(shape, lam, seed=seed1, seed2=seed2)
+    return gen_random_ops.random_poisson_v2(
+        shape, lam, dtype=dtype, seed=seed1, seed2=seed2)
