@@ -146,7 +146,7 @@ class RNNCellTest(test.TestCase):
           "root", initializer=init_ops.constant_initializer(0.5)):
         x = array_ops.zeros([1, 2])
         m = array_ops.zeros([1, 2])
-        g, _ = rnn_cell_impl.SRUCell(2)(x, m)
+        g, _ = contrib_rnn_cell.SRUCell(2)(x, m)
         sess.run([variables_lib.global_variables_initializer()])
         res = sess.run(
             [g], {x.name: np.array([[1., 1.]]),
@@ -662,6 +662,12 @@ class DropoutWrapperTest(test.TestCase):
         self.assertEqual(res[1].c.shape, (batch_size, 3))
         self.assertEqual(res[1].h.shape, (batch_size, 3))
         return res
+
+  def testWrappedCellProperty(self):
+    cell = rnn_cell_impl.BasicRNNCell(10)
+    wrapper = rnn_cell_impl.DropoutWrapper(cell)
+    # Github issue 15810
+    self.assertEqual(wrapper.wrapped_cell, cell)
 
   def testDropoutWrapperKeepAllConstantInput(self):
     keep = array_ops.ones([])

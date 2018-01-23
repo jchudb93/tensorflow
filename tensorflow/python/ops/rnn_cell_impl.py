@@ -47,6 +47,7 @@ from tensorflow.python.ops import variable_scope as vs
 from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.platform import tf_logging as logging
 from tensorflow.python.util import nest
+from tensorflow.python.util.tf_export import tf_export
 
 
 _BIAS_VARIABLE_NAME = "bias"
@@ -133,6 +134,7 @@ def _zero_state_tensors(state_size, batch_size, dtype):
   return nest.map_structure(get_state_shape, state_size)
 
 
+@tf_export("nn.rnn_cell.RNNCell")
 class RNNCell(base_layer.Layer):
   """Abstract object representing an RNN cell.
 
@@ -238,7 +240,8 @@ class RNNCell(base_layer.Layer):
     # Try to use the last cached zero_state. This is done to avoid recreating
     # zeros, especially when eager execution is enabled.
     state_size = self.state_size
-    if hasattr(self, "_last_zero_state"):
+    is_eager = context.in_eager_mode()
+    if is_eager and hasattr(self, "_last_zero_state"):
       (last_state_size, last_batch_size, last_dtype,
        last_output) = getattr(self, "_last_zero_state")
       if (last_batch_size == batch_size and
@@ -247,8 +250,10 @@ class RNNCell(base_layer.Layer):
         return last_output
     with ops.name_scope(type(self).__name__ + "ZeroState", values=[batch_size]):
       output = _zero_state_tensors(state_size, batch_size, dtype)
-    self._last_zero_state = (state_size, batch_size, dtype, output)
+    if is_eager:
+      self._last_zero_state = (state_size, batch_size, dtype, output)
     return output
+
 
 class _LayerRNNCell(RNNCell):
   """Subclass of RNNCells that act like proper `tf.Layer` objects.
@@ -290,87 +295,8 @@ class _LayerRNNCell(RNNCell):
     return base_layer.Layer.__call__(self, inputs, state, scope=scope,
                                      *args, **kwargs)
 
-class SRUCell(_LayerRNNCell):
-  """Training RNNs as Fast as CNNs (cf. https://arxiv.org/abs/1709.02755).
 
-  Args:
-    num_units: int, The number of units in the SRU cell.
-    activation: Nonlinearity to use.  Default: `tanh`.
-    reuse: (optional) Python boolean describing whether to reuse variables
-      in an existing scope.  If not `True`, and the existing scope already has
-      the given variables, an error is raised.
-    name: (optional) String, the name of the layer. Layers with the same name
-      will share weights, but to avoid mistakes we require reuse=True in such
-      cases.
-  """
-  def __init__(self, num_units,
-               activation=None, reuse=None, name=None):
-    super(SRUCell, self).__init__(_reuse=reuse, name=name)
-    self._num_units = num_units
-    self._activation = activation or math_ops.tanh
-
-    # Restrict inputs to be 2-dimensional matrices
-    self.input_spec = base_layer.InputSpec(ndim=2)
-
-  @property
-  def state_size(self):
-    return self._num_units
-
-  @property
-  def output_size(self):
-    return self._num_units
-
-  def build(self, inputs_shape):
-    if inputs_shape[1].value is None:
-      raise ValueError("Expected inputs.shape[-1] to be known, saw shape: %s"
-                       % inputs_shape)
-
-    input_depth = inputs_shape[1].value
-
-    # Here the contributor believes that the following constraints
-    # are implied. The reasoning is explained here with reference to
-    # the paper https://arxiv.org/pdf/1709.02755.pdf upon which this
-    # implementation is based.
-    # In section 2.1 Equation 5, specifically:
-    # h_t = r_t \odot g(c_t) + (1 - r_t) \odot x_t
-    # the pointwise operation between r_t and x_t means they have
-    # the same shape (since we are implementing an RNN cell, braodcasting
-    # does not happen to input of a single timestep); by the same
-    # reasons, x_t has the same shape as h_t, essentially mandating that
-    # input_depth = unit_num.
-    if input_depth != self._num_units:
-      raise ValueError("SRU requires input_depth == num_units, got "
-                       "input_depth = %s, num_units = %s" % (input_depth,
-                                                             self._num_units))
-
-    self._kernel = self.add_variable(
-        _WEIGHTS_VARIABLE_NAME,
-        shape=[input_depth, 3 * self._num_units])
-
-    self._bias = self.add_variable(
-        _BIAS_VARIABLE_NAME,
-        shape=[2 * self._num_units],
-        initializer=init_ops.constant_initializer(0.0, dtype=self.dtype))
-
-    self._built = True
-
-  def call(self, inputs, state):
-    """Simple recurrent unit (SRU) with num_units cells."""
-
-    U = math_ops.matmul(inputs, self._kernel)
-    x_bar, f_intermediate, r_intermediate = array_ops.split(value=U,
-                                                            num_or_size_splits=3,
-                                                            axis=1)
-
-    f_r = math_ops.sigmoid(nn_ops.bias_add(array_ops.concat(
-        [f_intermediate, r_intermediate], 1), self._bias))
-    f, r = array_ops.split(value=f_r, num_or_size_splits=2, axis=1)
-
-    c = f * state + (1.0 - f) * x_bar
-    h = r * self._activation(c) + (1.0 - r) * inputs
-
-    return h, c
-
+@tf_export("nn.rnn_cell.BasicRNNCell")
 class BasicRNNCell(_LayerRNNCell):
   """The most basic RNN cell.
 
@@ -428,6 +354,7 @@ class BasicRNNCell(_LayerRNNCell):
     return output, output
 
 
+@tf_export("nn.rnn_cell.GRUCell")
 class GRUCell(_LayerRNNCell):
   """Gated Recurrent Unit cell (cf. http://arxiv.org/abs/1406.1078).
 
@@ -525,6 +452,7 @@ class GRUCell(_LayerRNNCell):
 _LSTMStateTuple = collections.namedtuple("LSTMStateTuple", ("c", "h"))
 
 
+@tf_export("nn.rnn_cell.LSTMStateTuple")
 class LSTMStateTuple(_LSTMStateTuple):
   """Tuple used by LSTM Cells for `state_size`, `zero_state`, and output state.
 
@@ -544,6 +472,7 @@ class LSTMStateTuple(_LSTMStateTuple):
     return c.dtype
 
 
+@tf_export("nn.rnn_cell.BasicLSTMCell")
 class BasicLSTMCell(_LayerRNNCell):
   """Basic LSTM recurrent network cell.
 
@@ -668,6 +597,7 @@ class BasicLSTMCell(_LayerRNNCell):
     return new_h, new_state
 
 
+@tf_export("nn.rnn_cell.LSTMCell")
 class LSTMCell(_LayerRNNCell):
   """Long short-term memory unit (LSTM) recurrent network cell.
 
@@ -911,6 +841,7 @@ def _default_dropout_state_filter_visitor(substate):
   return True
 
 
+@tf_export("nn.rnn_cell.DropoutWrapper")
 class DropoutWrapper(RNNCell):
   """Operator adding dropout to inputs and outputs of the given cell."""
 
@@ -1057,6 +988,10 @@ class DropoutWrapper(RNNCell):
     return int(hashlib.md5(string).hexdigest()[:8], 16) & 0x7FFFFFFF
 
   @property
+  def wrapped_cell(self):
+    return self._cell
+
+  @property
   def state_size(self):
     return self._cell.state_size
 
@@ -1135,6 +1070,7 @@ class DropoutWrapper(RNNCell):
     return output, new_state
 
 
+@tf_export("nn.rnn_cell.ResidualWrapper")
 class ResidualWrapper(RNNCell):
   """RNNCell wrapper that ensures cell inputs are added to the outputs."""
 
@@ -1190,6 +1126,7 @@ class ResidualWrapper(RNNCell):
     return (res_outputs, new_state)
 
 
+@tf_export("nn.rnn_cell.DeviceWrapper")
 class DeviceWrapper(RNNCell):
   """Operator that ensures an RNNCell runs on a particular device."""
 
@@ -1224,6 +1161,7 @@ class DeviceWrapper(RNNCell):
       return self._cell(inputs, state, scope=scope)
 
 
+@tf_export("nn.rnn_cell.MultiRNNCell")
 class MultiRNNCell(RNNCell):
   """RNN cell composed sequentially of multiple simple cells."""
 
